@@ -41,6 +41,7 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Typeface;
 import android.net.ConnectivityManager;
+import android.net.InetAddresses;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -1993,7 +1994,8 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
     // Called from native code
     private boolean isDomainBlocked(String name) {
         lock.readLock().lock();
-        boolean blocked = (mapHostsBlocked.containsKey(name) && mapHostsBlocked.get(name));
+        Boolean block = mapHostsBlocked.get(name);
+        boolean blocked = block != null && block;
         lock.readLock().unlock();
         return blocked;
     }
@@ -2037,11 +2039,6 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
                 // Allow unfiltered UDP
                 packet.allowed = true;
                 Log.i(TAG, "Allowing UDP " + packet);
-            } else if (packet.uid < 2000 &&
-                    !last_connected && isSupported(packet.protocol) && false) {
-                // Allow system applications in disconnected state
-                packet.allowed = true;
-                Log.w(TAG, "Allowing disconnected system " + packet);
             } else if ((packet.uid < 2000 || BuildConfig.PLAY_STORE_RELEASE) &&
                     !mapUidKnown.containsKey(packet.uid) && isSupported(packet.protocol)) {
                 // Allow unknown (system) traffic
@@ -2054,12 +2051,13 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
             } else {
                 boolean filtered = false;
                 IPKey key = new IPKey(packet.version, packet.protocol, packet.dport, packet.uid);
-                if (mapUidIPFilters.containsKey(key))
+                Map<InetAddress, IPRule> filterMap = mapUidIPFilters.get(key);
+                if (filterMap != null)
+                    // resolve hostname only if required for filtering
                     try {
                         InetAddress iaddr = InetAddress.getByName(packet.daddr);
-                        Map<InetAddress, IPRule> map = mapUidIPFilters.get(key);
-                        if (map != null && map.containsKey(iaddr)) {
-                            IPRule rule = map.get(iaddr);
+                        IPRule rule = filterMap.get(iaddr);
+                        if (rule != null) {
                             if (rule.isExpired())
                                 Log.i(TAG, "DNS expired " + packet + " rule " + rule);
                             else {
@@ -2072,19 +2070,20 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
                     } catch (UnknownHostException ex) {
                         Log.w(TAG, "Allowed " + ex.toString() + "\n" + Log.getStackTraceString(ex));
                     }
-
-                if (!filtered)
-                    if (mapUidAllowed.containsKey(packet.uid))
-                        packet.allowed = mapUidAllowed.get(packet.uid);
+                if (!filtered) {
+                    Boolean allowed = mapUidAllowed.get(packet.uid);
+                    if (allowed != null)
+                        packet.allowed = allowed;
                     else
                         Log.w(TAG, "No rules for " + packet);
+                }
             }
         }
 
         Allowed allowed = null;
         if (packet.allowed) {
-            if (mapForward.containsKey(packet.dport)) {
-                Forward fwd = mapForward.get(packet.dport);
+            Forward fwd = mapForward.get(packet.dport);
+            if (fwd != null) {
                 if (fwd.ruid == packet.uid) {
                     allowed = new Allowed();
                 } else {
