@@ -1645,7 +1645,14 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
                     String[] words = line.split("\\s+");
                     if (words.length == 2) {
                         count++;
-                        mapHostsBlocked.put(words[1], true);
+                        String host = words[1];
+                        if (host.startsWith("-")) {
+                            // remove hostnames starting with "-" from the blocklist
+                            mapHostsBlocked.remove(host.substring(1));
+                        } else {
+                            // add hostname to blocklist
+                            mapHostsBlocked.put(host, true);
+                        }
                     } else
                         Log.i(TAG, "Invalid hosts file line: " + line);
                 }
