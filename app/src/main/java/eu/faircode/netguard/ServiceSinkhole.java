@@ -41,7 +41,6 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Typeface;
 import android.net.ConnectivityManager;
-import android.net.InetAddresses;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -71,17 +70,16 @@ import android.util.Log;
 import android.util.Pair;
 import android.util.TypedValue;
 import android.widget.RemoteViews;
-
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.preference.PreferenceManager;
-
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import javax.net.ssl.HttpsURLConnection;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -111,8 +109,6 @@ import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-import javax.net.ssl.HttpsURLConnection;
 
 public class ServiceSinkhole extends VpnService implements SharedPreferences.OnSharedPreferenceChangeListener {
     private static final String TAG = "NetGuard.Service";
@@ -2035,6 +2031,7 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
 
     // Called from native code
     private Allowed isAddressAllowed(Packet packet) {
+        //long t0 = System.nanoTime(), t1 = 0, t2 = 0, tx;
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
 
         lock.readLock().lock();
@@ -2064,20 +2061,32 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
                 boolean filtered = false;
                 IPKey key = new IPKey(packet.version, packet.protocol, packet.dport, packet.uid);
                 Map<InetAddress, IPRule> filterMap = mapUidIPFilters.get(key);
-                if (filterMap != null)
+                boolean useHosts = prefs.getBoolean("use_hosts", false);
+                if (filterMap != null || useHosts)
                     // resolve hostname only if required for filtering
                     try {
                         InetAddress iaddr = InetAddress.getByName(packet.daddr);
-                        IPRule rule = filterMap.get(iaddr);
-                        if (rule != null) {
-                            if (rule.isExpired())
-                                Log.i(TAG, "DNS expired " + packet + " rule " + rule);
-                            else {
-                                filtered = true;
-                                packet.allowed = !rule.isBlocked();
-                                Log.i(TAG, "Filtering " + packet +
-                                        " allowed=" + packet.allowed + " rule " + rule);
+                        if (filterMap != null) {
+                            IPRule rule = filterMap.get(iaddr);
+                            if (rule != null) {
+                                if (rule.isExpired())
+                                    Log.i(TAG, "DNS expired " + packet + " rule " + rule);
+                                else {
+                                    filtered = true;
+                                    packet.allowed = !rule.isBlocked();
+                                    Log.i(TAG, "Filtering " + packet +
+                                            " allowed=" + packet.allowed + " rule " + rule);
+                                }
                             }
+                        }
+                        if (!filtered && useHosts) {
+                            //t1 = System.nanoTime();
+                            String qName = DatabaseHelper.getInstance(this).getQName(packet.uid, packet.daddr);
+                            if (qName != null && mapHostsBlocked.containsKey(qName)) {
+                                filtered = true;
+                                packet.allowed = false;
+                            }
+                            //t2 = System.nanoTime();
                         }
                     } catch (UnknownHostException ex) {
                         Log.w(TAG, "Allowed " + ex.toString() + "\n" + Log.getStackTraceString(ex));
@@ -2113,6 +2122,9 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
                 if (packet.uid != Process.myUid())
                     logPacket(packet);
 
+        //tx = System.nanoTime();
+        //double tt = 1.0 * (tx - t0) / 1_000_000, td = 1.0 * (t2 - t1) / 1_000_000, to = 100.0 * td / tt;
+        //Log.d(TAG, "isAddressAllowed: total: " + tt + " ms, domain check: " + td + " ms, overhead: " + to + "%");
         return allowed;
     }
 
