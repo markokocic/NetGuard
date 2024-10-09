@@ -2033,6 +2033,7 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
 
     // Called from native code
     private Allowed isAddressAllowed(Packet packet) {
+        //long t0 = System.nanoTime();
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
 
         lock.readLock().lock();
@@ -2057,20 +2058,33 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
                 boolean filtered = false;
                 IPKey key = new IPKey(packet.version, packet.protocol, packet.dport, packet.uid);
                 Map<InetAddress, IPRule> filterMap = mapUidIPFilters.get(key);
-                if (filterMap != null)
+                boolean useHosts = prefs.getBoolean("use_hosts", false);
+                if (filterMap != null || useHosts)
                     // resolve hostname only if required for filtering
                     try {
                         InetAddress iaddr = InetAddress.getByName(packet.daddr);
-                        IPRule rule = filterMap.get(iaddr);
-                        if (rule != null) {
-                            if (rule.isExpired())
-                                Log.i(TAG, "DNS expired " + packet + " rule " + rule);
-                            else {
-                                filtered = true;
-                                packet.allowed = !rule.isBlocked();
-                                Log.i(TAG, "Filtering " + packet +
-                                        " allowed=" + packet.allowed + " rule " + rule);
+                        if (filterMap != null) {
+                            IPRule rule = filterMap.get(iaddr);
+                            if (rule != null) {
+                                if (rule.isExpired())
+                                    Log.i(TAG, "DNS expired " + packet + " rule " + rule);
+                                else {
+                                    filtered = true;
+                                    packet.allowed = !rule.isBlocked();
+                                    Log.i(TAG, "Filtering " + packet +
+                                            " allowed=" + packet.allowed + " rule " + rule);
+                                }
                             }
+                        }
+                        if (!filtered && useHosts) {
+                            //long t1 = System.nanoTime();
+                            String qName = DatabaseHelper.getInstance(this).getQName(packet.uid, packet.daddr);
+                            if (qName != null && mapHostsBlocked.containsKey(qName)) {
+                                filtered = true;
+                                packet.allowed = false;
+                            }
+                            //long t2 = System.nanoTime();
+                            //Log.d(TAG, "filtering: " + filtered + " qName: " + qName + " time: " + (1.0 * (t2 - t1) / 1000000)  + " ms");
                         }
                     } catch (UnknownHostException ex) {
                         Log.w(TAG, "Allowed " + ex.toString() + "\n" + Log.getStackTraceString(ex));
@@ -2105,6 +2119,10 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
             if (packet.protocol != 6 /* TCP */ || !"".equals(packet.flags))
                 if (packet.uid != Process.myUid())
                     logPacket(packet);
+
+        long tx = System.nanoTime();
+        //Log.d(TAG, "filtering: isAdressAllowed " + (1.0 * (tx - t0) / 1000000)  + " ms");
+        //Log.d(TAG, "filtering: --------------------------------------------------------");
 
         return allowed;
     }
