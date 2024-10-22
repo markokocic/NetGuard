@@ -345,7 +345,7 @@ void handle_ip(const struct arguments *args,
     } else {
         if (protocol == IPPROTO_UDP)
             block_udp(args, pkt, length, payload, uid);
-        else if (protocol == IPPROTO_TCP && *server_name != 0 && !allowed)
+        else if (protocol == IPPROTO_TCP && *server_name != 0)
             handle_tcp(args, pkt, length, payload, uid, allowed, redirect, epoll_fd); // RST
 
         log_android(ANDROID_LOG_WARN, "Address v%d p%d %s/%u syn %d not allowed",
